@@ -3,10 +3,11 @@ import re
 import shutil
 from pathlib import Path
 import ezdxf
-from ezdxf.addons.drawing import RenderContext, Frontend
-from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from PIL import Image
+from ezdxf.entities import Dimension
+
 
 # =============================
 # Config
@@ -17,10 +18,10 @@ FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
 
+
 # =============================
 # Utilidades
 # =============================
-
 def carregar_dxf(path: str):
     doc = ezdxf.readfile(path)
     msp = doc.modelspace()
@@ -34,14 +35,14 @@ def get_bbox(entity):
     except Exception:
         return None
 
-def ponto_no_bbox(x, y, bbox, margem=5):
+def ponto_no_bbox(x, y, bbox, margem=200):
     x1, y1, x2, y2 = bbox
     return (x1 - margem <= x <= x2 + margem) and (y1 - margem <= y <= y2 + margem)
+
 
 # =============================
 # Processamento
 # =============================
-
 def filtrar_perfis(msp):
     perfis = []
     for e in msp.query('*[layer=="PERFIS"]'):
@@ -55,13 +56,13 @@ def filtrar_perfis(msp):
 
 def associar_entidades(msp, perfis):
     textos = [e for e in msp.query('TEXT MTEXT')]
-    cotas = [e for e in msp.query('DIMENSION ROTATEDDIMENSION')]
 
     for perfil in perfis:
         bbox = get_bbox(perfil["polyline"])
         if not bbox:
             continue
 
+        # textos soltos dentro do bbox
         for t in textos:
             try:
                 x, y, _ = t.dxf.insert
@@ -71,13 +72,21 @@ def associar_entidades(msp, perfis):
                 conteudo = t.plain_text() if hasattr(t, "plain_text") else t.dxf.text
                 perfil["texts"].append(conteudo)
 
-        for d in cotas:
+        # cotas renderizadas (entidades do bloco)
+        for d in msp.query("DIMENSION"):
             try:
-                x, y, _ = d.dxf.defpoint
-            except AttributeError:
-                continue
-            if ponto_no_bbox(x, y, bbox, margem=20):
-                perfil["dimensions"].append(d)
+                block = d.get_block()
+                if block is None:
+                    continue
+                for e in block:
+                    if e.dxftype() in ("TEXT", "MTEXT"):
+                        x, y, _ = e.dxf.insert
+                        if ponto_no_bbox(x, y, bbox, margem=20):
+                            perfil["dimensions"].append(e)
+                    elif e.dxftype() in ("LINE", "ARC"):
+                        perfil["dimensions"].append(e)
+            except Exception as ex:
+                print(f"⚠️ Erro ao processar bloco de cota: {ex}")
 
     return perfis
 
@@ -87,70 +96,97 @@ def extrair_nome(texts):
             return t.strip()
     return "perfil_sem_nome"
 
+def renderizar_cotas(msp):
+    """Força a renderização das entidades de cota (DIMENSION)."""
+    for e in msp.query("DIMENSION"):
+        try:
+            e.render()  # sem discard
+        except Exception as err:
+            print(f"⚠️ Não consegui renderizar uma cota: {err}")
+
+
 # =============================
 # Renderização
 # =============================
-
-def render_dxf_to_image(doc, path, size=(500, 500), bg_color="#073484"):
-    fig = plt.figure(figsize=(size[0]/100, size[1]/100), dpi=100)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_facecolor(bg_color)
-    ax.set_axis_off()
-
-    ctx = RenderContext(doc)
-    out = MatplotlibBackend(ax)
-    Frontend(ctx, out).draw_layout(doc.modelspace(), finalize=True)
-
-    fig.savefig(path, dpi=100, transparent=False)
-    plt.close(fig)
-
 def render_imagens(perfil, nome):
     # -----------------------------
-    # PNG 500x500
+    # PNG 500x500 com preenchimento e cotas
     # -----------------------------
-    doc_fig = ezdxf.new()
-    msp_fig = doc_fig.modelspace()
-
-    # Adiciona polyline com cor preta
     if perfil["polyline"].dxftype() == "LWPOLYLINE":
-        points = perfil["polyline"].get_points()
-        msp_fig.add_lwpolyline(points, dxfattribs={'color': 0})  # 0 = preto
+        points = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
     else:
-        msp_fig.add_polyline2d(perfil["polyline"].points(), dxfattribs={'color': 0})
+        points = [(x, y) for x, y, *_ in perfil["polyline"].points()]
 
-    # Adiciona cotas
-    for d in perfil["dimensions"]:
+    fig, ax = plt.subplots(figsize=(5, 5), dpi=100)
+    ax.set_facecolor("#FFFFFF")
+    ax.set_axis_off()
+
+    # perfil preto preenchido
+    polygon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000")
+    ax.add_patch(polygon)
+
+    # cotas renderizadas (TEXT, MTEXT, LINE, ARC)
+    for e in perfil["dimensions"]:
         try:
-            msp_fig.add_entity(d.copy())
-        except Exception:
-            pass
+            if e.dxftype() == "TEXT":
+                x, y, _ = e.dxf.insert
+                ax.text(x, y, e.dxf.text, color="black", fontsize=8,
+                        ha="center", va="center")
+            elif e.dxftype() == "MTEXT":
+                x, y, _ = e.dxf.insert
+                ax.text(x, y, e.text, color="black", fontsize=8,
+                        ha="center", va="center")
+            elif e.dxftype() == "LINE":
+                x1, y1, _ = e.dxf.start
+                x2, y2, _ = e.dxf.end
+                ax.plot([x1, x2], [y1, y2], color="black", linewidth=0.5)
+            elif e.dxftype() == "ARC":
+                center = e.dxf.center
+                radius = e.dxf.radius
+                start_angle = e.dxf.start_angle
+                end_angle = e.dxf.end_angle
+                arc = patches.Arc(
+                    (center[0], center[1]),
+                    2*radius, 2*radius,
+                    angle=0,
+                    theta1=start_angle,
+                    theta2=end_angle,
+                    color="black", linewidth=0.5
+                )
+                ax.add_patch(arc)
+        except Exception as ex:
+            print(f"⚠️ Erro ao desenhar entidade de cota: {ex}")
 
+    ax.autoscale_view()
+    ax.set_aspect('equal')
     path_png = FIGURAS_DIR / f"{nome}.png"
-    render_dxf_to_image(doc_fig, path_png, size=(500, 500), bg_color="#4E5480")
+    fig.savefig(path_png, dpi=100, transparent=False)
+    plt.close(fig)
 
     # -----------------------------
-    # BMP 64x64
+    # BMP 64x64 simples (sem cotas)
     # -----------------------------
-    doc_icon = ezdxf.new()
-    msp_icon = doc_icon.modelspace()
-    if perfil["polyline"].dxftype() == "LWPOLYLINE":
-        points = perfil["polyline"].get_points()
-        msp_icon.add_lwpolyline(points, dxfattribs={'color': 0})
-    else:
-        msp_icon.add_polyline2d(perfil["polyline"].points(), dxfattribs={'color': 0})
+    fig, ax = plt.subplots(figsize=(0.64, 0.64), dpi=100)
+    ax.set_facecolor("#FFFFFF")
+    ax.set_axis_off()
+    polygon_icon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000")
+    ax.add_patch(polygon_icon)
+    ax.autoscale_view()
+    ax.set_aspect('equal')
 
     temp_icon_png = ICONES_DIR / f"{nome}_temp.png"
-    render_dxf_to_image(doc_icon, temp_icon_png, size=(64, 64), bg_color="#FFFFFF")
+    fig.savefig(temp_icon_png, dpi=100, transparent=False)
+    plt.close(fig)
 
-    img = Image.open(temp_icon_png)
-    path_bmp = ICONES_DIR / f"{nome}.bmp"
-    img.save(path_bmp, format="BMP")
+    with Image.open(temp_icon_png) as img:
+        path_bmp = ICONES_DIR / f"{nome}.bmp"
+        img.save(path_bmp, format="BMP")
     temp_icon_png.unlink()
+
 
 # =============================
 # Export
 # =============================
-
 def compactar_output():
     if ZIP_PATH.exists():
         ZIP_PATH.unlink()
@@ -160,10 +196,10 @@ def compactar_output():
         root_dir=TMP_DIR
     )
 
+
 # =============================
 # Main
 # =============================
-
 def main(input_dxf: str):
     if OUTPUT_DIR.exists():
         shutil.rmtree(OUTPUT_DIR)
@@ -171,6 +207,10 @@ def main(input_dxf: str):
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
     doc, msp = carregar_dxf(input_dxf)
+
+    # 🔑 renderiza cotas primeiro
+    renderizar_cotas(msp)
+
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
 
@@ -180,6 +220,7 @@ def main(input_dxf: str):
 
     compactar_output()
     print(f"✅ Arquivo final gerado em: {ZIP_PATH}")
+
 
 if __name__ == "__main__":
     input_file = Path("files") / "Perfis.dxf"
