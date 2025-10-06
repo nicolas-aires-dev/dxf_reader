@@ -1,3 +1,6 @@
+# =============================
+# Imports
+# =============================
 import os
 import re
 import shutil
@@ -5,19 +8,20 @@ from pathlib import Path
 import ezdxf
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from PIL import Image
-from ezdxf.entities import Dimension
-
+from PIL import Image, ImageOps
+from ezdxf.addons.drawing import RenderContext, Frontend
+from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+from ezdxf.addons.drawing.properties import LayoutProperties
+from ezdxf.addons.drawing.config import Configuration
 
 # =============================
-# Config
+# Configurações de diretórios
 # =============================
 OUTPUT_DIR = Path("./output")
 TMP_DIR = OUTPUT_DIR / "tmp"
 FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
-
 
 # =============================
 # Utilidades
@@ -29,15 +33,80 @@ def carregar_dxf(path: str):
 
 def get_bbox(entity):
     try:
-        ext = entity.bbox()
-        (x1, y1, _), (x2, y2, _) = ext
-        return x1, y1, x2, y2
+        if entity.dxftype() == "LWPOLYLINE":
+            points = [(x, y) for x, y, *_ in entity.get_points()]
+        else:
+            points = [(x, y) for x, y, *_ in entity.points()]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        return min(xs), min(ys), max(xs), max(ys)
     except Exception:
         return None
 
-def ponto_no_bbox(x, y, bbox, margem=200):
+def ponto_no_bbox(x, y, bbox, margem=10):
     x1, y1, x2, y2 = bbox
     return (x1 - margem <= x <= x2 + margem) and (y1 - margem <= y <= y2 + margem)
+
+def centro_bbox(bbox):
+    x1, y1, x2, y2 = bbox
+    return (x1 + x2) / 2, (y1 + y2) / 2
+
+def distancia(p1, p2):
+    return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
+
+def is_quadrado(polyline):
+    try:
+        if polyline.dxftype() == "LWPOLYLINE":
+            points = [(x, y) for x, y, *_ in polyline.get_points()]
+        else:
+            points = [(x, y) for x, y, *_ in polyline.points()]
+        if len(points) != 4 or not polyline.closed:
+            return False
+        def dist(p1, p2):
+            return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
+        lados = [dist(points[i], points[(i + 1) % 4]) for i in range(4)]
+        media = sum(lados) / 4
+        return all(abs(l - media) < 1.0 for l in lados)
+    except Exception:
+        return False
+    
+def centralizar_em_moldura(img_path, tamanho_final=(500, 500)):
+    with Image.open(img_path) as img:
+        img = img.convert("RGBA")
+        img.thumbnail(tamanho_final, Image.Resampling.LANCZOS)
+
+        # Criar fundo branco
+        fundo = Image.new("RGBA", tamanho_final, (255, 255, 255, 255))
+
+        # Calcular posição central
+        x = (tamanho_final[0] - img.width) // 2
+        y = (tamanho_final[1] - img.height) // 2
+
+        fundo.paste(img, (x, y), img)
+        fundo = fundo.convert("RGB")  # remover canal alpha se quiser salvar como PNG normal
+        fundo.save(img_path)
+
+def detectar_furos(msp, perfis):
+    candidatos = [e for e in msp.query('LWPOLYLINE POLYLINE') if e.closed]
+
+    for perfil in perfis:
+        principal = perfil["polyline"]
+        bbox_principal = get_bbox(principal)
+        centro_principal = centro_bbox(bbox_principal)
+
+        for furo in candidatos:
+            if furo == principal:
+                continue  # ignora o próprio perfil
+
+            bbox_furo = get_bbox(furo)
+            if not bbox_furo:
+                continue
+
+            centro_furo = centro_bbox(bbox_furo)
+
+            # Se o centro do furo estiver dentro do bbox do perfil principal
+            if ponto_no_bbox(centro_furo[0], centro_furo[1], bbox_principal, margem=2):
+                perfil["furos"].append(furo)
 
 
 # =============================
@@ -45,24 +114,26 @@ def ponto_no_bbox(x, y, bbox, margem=200):
 # =============================
 def filtrar_perfis(msp):
     perfis = []
-    for e in msp.query('*[layer=="PERFIS"]'):
-        if e.dxftype() in ["LWPOLYLINE", "POLYLINE"]:
-            perfis.append({
-                "polyline": e,
-                "texts": [],
-                "dimensions": []
-            })
+    for e in msp.query('LWPOLYLINE POLYLINE'):
+        if e.dxf.layer.upper() == "MOLDURA":
+            continue
+        perfis.append({
+            "polyline": e,
+            "texts": [],
+            "dimensions": [],
+            "furos": []  # ← aqui
+        })
     return perfis
+
 
 def associar_entidades(msp, perfis):
     textos = [e for e in msp.query('TEXT MTEXT')]
-
+    cotas = [e for e in msp.query('DIMENSION ROTATEDDIMENSION')]
     for perfil in perfis:
         bbox = get_bbox(perfil["polyline"])
         if not bbox:
             continue
-
-        # textos soltos dentro do bbox
+        centro = centro_bbox(bbox)
         for t in textos:
             try:
                 x, y, _ = t.dxf.insert
@@ -71,23 +142,13 @@ def associar_entidades(msp, perfis):
             if ponto_no_bbox(x, y, bbox):
                 conteudo = t.plain_text() if hasattr(t, "plain_text") else t.dxf.text
                 perfil["texts"].append(conteudo)
-
-        # cotas renderizadas (entidades do bloco)
-        for d in msp.query("DIMENSION"):
+        for d in cotas:
             try:
-                block = d.get_block()
-                if block is None:
-                    continue
-                for e in block:
-                    if e.dxftype() in ("TEXT", "MTEXT"):
-                        x, y, _ = e.dxf.insert
-                        if ponto_no_bbox(x, y, bbox, margem=20):
-                            perfil["dimensions"].append(e)
-                    elif e.dxftype() in ("LINE", "ARC"):
-                        perfil["dimensions"].append(e)
-            except Exception as ex:
-                print(f"⚠️ Erro ao processar bloco de cota: {ex}")
-
+                x, y, _ = d.dxf.defpoint
+            except AttributeError:
+                continue
+            if distancia((x, y), centro) < 100:
+                perfil["dimensions"].append(d)
     return perfis
 
 def extrair_nome(texts):
@@ -96,96 +157,114 @@ def extrair_nome(texts):
             return t.strip()
     return "perfil_sem_nome"
 
-def renderizar_cotas(msp):
-    """Força a renderização das entidades de cota (DIMENSION)."""
-    for e in msp.query("DIMENSION"):
-        try:
-            e.render()  # sem discard
-        except Exception as err:
-            print(f"⚠️ Não consegui renderizar uma cota: {err}")
-
-
 # =============================
 # Renderização
 # =============================
-def render_imagens(perfil, nome):
-    # -----------------------------
-    # PNG 500x500 com preenchimento e cotas
-    # -----------------------------
+def criar_layout_temporario(doc, perfil):
+    layout_name = "TEMP_LAYOUT"
+    if layout_name in doc.layouts:
+        doc.layouts.delete(layout_name)
+    layout = doc.layouts.new(layout_name)
+
+    # Copiar polyline e cotas
+    for entidade in [perfil["polyline"]] + perfil["dimensions"]:
+        layout.add_entity(entidade.copy())
+
+    return layout
+
+
+def render_completo_layout(layout, ax):
+    ctx = RenderContext(layout.doc)
+    layout_props = LayoutProperties.from_layout(layout)
+    layout_props.set_colors(bg="#FFFFFF", fg="#000000")
+    config = Configuration.defaults().with_changes(
+        lineweight_scaling=3.0,
+        min_lineweight=0.8
+    )
+    backend = MatplotlibBackend(ax)
+    frontend = Frontend(ctx, backend, config=config)
+    frontend.draw_layout(layout, finalize=True, layout_properties=layout_props)
+
+
+def render_imagens(doc, perfil, nome_base):
+    nome = f"{nome_base}"
     if perfil["polyline"].dxftype() == "LWPOLYLINE":
         points = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
     else:
         points = [(x, y) for x, y, *_ in perfil["polyline"].points()]
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    margem = 10
 
+    # PNG com cotas
     fig, ax = plt.subplots(figsize=(5, 5), dpi=100)
     ax.set_facecolor("#FFFFFF")
     ax.set_axis_off()
 
-    # perfil preto preenchido
-    polygon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000")
+    # Calcular centro do perfil
+    centro_x = (min_x + max_x) / 2
+    centro_y = (min_y + max_y) / 2
+
+    # Definir área fixa de visualização (500x500 px → 5x5 inches @ 100 dpi)
+    # Vamos usar uma área de 100x100 unidades DXF como padrão
+    half_range = 50  # metade da área em unidades DXF
+
+    ax.set_xlim(centro_x - half_range, centro_x + half_range)
+    ax.set_ylim(centro_y - half_range, centro_y + half_range)
+    ax.set_aspect('equal')
+
+
+    # Desenhar polígono principal (preenchido em preto)
+    polygon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000", linewidth=1.5)
     ax.add_patch(polygon)
 
-    # cotas renderizadas (TEXT, MTEXT, LINE, ARC)
-    for e in perfil["dimensions"]:
-        try:
-            if e.dxftype() == "TEXT":
-                x, y, _ = e.dxf.insert
-                ax.text(x, y, e.dxf.text, color="black", fontsize=8,
-                        ha="center", va="center")
-            elif e.dxftype() == "MTEXT":
-                x, y, _ = e.dxf.insert
-                ax.text(x, y, e.text, color="black", fontsize=8,
-                        ha="center", va="center")
-            elif e.dxftype() == "LINE":
-                x1, y1, _ = e.dxf.start
-                x2, y2, _ = e.dxf.end
-                ax.plot([x1, x2], [y1, y2], color="black", linewidth=0.5)
-            elif e.dxftype() == "ARC":
-                center = e.dxf.center
-                radius = e.dxf.radius
-                start_angle = e.dxf.start_angle
-                end_angle = e.dxf.end_angle
-                arc = patches.Arc(
-                    (center[0], center[1]),
-                    2*radius, 2*radius,
-                    angle=0,
-                    theta1=start_angle,
-                    theta2=end_angle,
-                    color="black", linewidth=0.5
-                )
-                ax.add_patch(arc)
-        except Exception as ex:
-            print(f"⚠️ Erro ao desenhar entidade de cota: {ex}")
 
-    ax.autoscale_view()
-    ax.set_aspect('equal')
+    # Desenhar polígono
+    for furo in perfil["furos"]:
+        if furo.dxftype() == "LWPOLYLINE":
+            pontos = [(x, y) for x, y, *_ in furo.get_points()]
+        else:
+            pontos = [(x, y) for x, y, *_ in furo.points()]
+        
+        furo_patch = patches.Polygon(pontos, closed=True, facecolor="#FFFFFF", edgecolor="#000000", linewidth=1.0)
+        ax.add_patch(furo_patch)
+
+
+
+    # Renderizar layout temporário
+    layout_temp = criar_layout_temporario(doc, perfil)
+    render_completo_layout(layout_temp, ax)
+
+    # Salvar imagem
     path_png = FIGURAS_DIR / f"{nome}.png"
     fig.savefig(path_png, dpi=100, transparent=False)
+    centralizar_em_moldura(path_png)
     plt.close(fig)
 
-    # -----------------------------
-    # BMP 64x64 simples (sem cotas)
-    # -----------------------------
+
+
+    # BMP sem cotas
     fig, ax = plt.subplots(figsize=(0.64, 0.64), dpi=100)
     ax.set_facecolor("#FFFFFF")
     ax.set_axis_off()
-    polygon_icon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000")
+    polygon_icon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000", linewidth=1.5)
     ax.add_patch(polygon_icon)
-    ax.autoscale_view()
+    ax.set_xlim(min_x - margem, max_x + margem)
+    ax.set_ylim(min_y - margem, max_y + margem)
     ax.set_aspect('equal')
-
-    temp_icon_png = ICONES_DIR / f"{nome}_temp.png"
+    temp_icon_png = ICONES_DIR / f"{nome_base}_temp.png"
     fig.savefig(temp_icon_png, dpi=100, transparent=False)
     plt.close(fig)
 
     with Image.open(temp_icon_png) as img:
-        path_bmp = ICONES_DIR / f"{nome}.bmp"
+        path_bmp = ICONES_DIR / f"{nome_base}.bmp"
         img.save(path_bmp, format="BMP")
     temp_icon_png.unlink()
 
-
 # =============================
-# Export
+# Exportação
 # =============================
 def compactar_output():
     if ZIP_PATH.exists():
@@ -196,32 +275,29 @@ def compactar_output():
         root_dir=TMP_DIR
     )
 
-
 # =============================
-# Main
+# Execução principal
 # =============================
-def main(input_dxf: str):
+def main():
     if OUTPUT_DIR.exists():
         shutil.rmtree(OUTPUT_DIR)
     FIGURAS_DIR.mkdir(parents=True, exist_ok=True)
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
-    doc, msp = carregar_dxf(input_dxf)
-
-    # 🔑 renderiza cotas primeiro
-    renderizar_cotas(msp)
-
+    input_file = Path("files") / "SixEquals.dxf"
+#   input_file = Path("files") / "Perfis.dxf"
+#    input_file = Path("files") / "Perfis.dxf"
+    doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
+    detectar_furos(msp, perfis)
 
-    for perfil in perfis:
-        nome = extrair_nome(perfil["texts"])
-        render_imagens(perfil, nome)
+    for i, perfil in enumerate(perfis):
+        nome_base = extrair_nome(perfil["texts"])
+        render_imagens(doc, perfil, f"{nome_base}")
 
     compactar_output()
-    print(f"✅ Arquivo final gerado em: {ZIP_PATH}")
-
+    print(f"✅ Imagens geradas com cotas (PNG) e sem cotas (BMP). Arquivo final: {ZIP_PATH}")
 
 if __name__ == "__main__":
-    input_file = Path("files") / "Perfis.dxf"
-    main(str(input_file))
+    main()
