@@ -285,8 +285,8 @@ def main():
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
     input_file = Path("files") / "SixEquals.dxf"
+#   input_file = Path("files") / "TwoEquals.dxf"
 #   input_file = Path("files") / "Perfis.dxf"
-#    input_file = Path("files") / "Perfis.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
