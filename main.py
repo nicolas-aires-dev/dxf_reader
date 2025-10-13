@@ -1,18 +1,21 @@
 # =============================
 # Imports
 # =============================
-import os
 import re
 import shutil
 from pathlib import Path
 import ezdxf
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from PIL import Image, ImageOps
+from PIL import Image
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from ezdxf.addons.drawing.properties import LayoutProperties
 from ezdxf.addons.drawing.config import Configuration
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import threading
 
 # =============================
 # Configurações de diretórios
@@ -22,6 +25,7 @@ TMP_DIR = OUTPUT_DIR / "tmp"
 FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
+
 
 # =============================
 # Utilidades
@@ -43,7 +47,7 @@ def get_bbox(entity):
     except Exception:
         return None
 
-def ponto_no_bbox(x, y, bbox, margem=10):
+def ponto_no_bbox(x, y, bbox, margem=15):
     x1, y1, x2, y2 = bbox
     return (x1 - margem <= x <= x2 + margem) and (y1 - margem <= y <= y2 + margem)
 
@@ -69,21 +73,18 @@ def is_quadrado(polyline):
         return all(abs(l - media) < 1.0 for l in lados)
     except Exception:
         return False
-    
+
 def centralizar_em_moldura(img_path, tamanho_final=(500, 500)):
     with Image.open(img_path) as img:
         img = img.convert("RGBA")
         img.thumbnail(tamanho_final, Image.Resampling.LANCZOS)
 
-        # Criar fundo branco
         fundo = Image.new("RGBA", tamanho_final, (255, 255, 255, 255))
-
-        # Calcular posição central
         x = (tamanho_final[0] - img.width) // 2
         y = (tamanho_final[1] - img.height) // 2
 
         fundo.paste(img, (x, y), img)
-        fundo = fundo.convert("RGB")  # remover canal alpha se quiser salvar como PNG normal
+        fundo = fundo.convert("RGB")
         fundo.save(img_path)
 
 def detectar_furos(msp, perfis):
@@ -96,18 +97,13 @@ def detectar_furos(msp, perfis):
 
         for furo in candidatos:
             if furo == principal:
-                continue  # ignora o próprio perfil
-
+                continue
             bbox_furo = get_bbox(furo)
             if not bbox_furo:
                 continue
-
             centro_furo = centro_bbox(bbox_furo)
-
-            # Se o centro do furo estiver dentro do bbox do perfil principal
             if ponto_no_bbox(centro_furo[0], centro_furo[1], bbox_principal, margem=2):
                 perfil["furos"].append(furo)
-
 
 # =============================
 # Processamento
@@ -121,10 +117,9 @@ def filtrar_perfis(msp):
             "polyline": e,
             "texts": [],
             "dimensions": [],
-            "furos": []  # ← aqui
+            "furos": []
         })
     return perfis
-
 
 def associar_entidades(msp, perfis):
     textos = [e for e in msp.query('TEXT MTEXT')]
@@ -160,18 +155,33 @@ def extrair_nome(texts):
 # =============================
 # Renderização
 # =============================
+def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.5):
+    """Desenha o perfil principal e seus furos em um eixo Matplotlib."""
+    if perfil["polyline"].dxftype() == "LWPOLYLINE":
+        pontos_principais = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
+    else:
+        pontos_principais = [(x, y) for x, y, *_ in perfil["polyline"].points()]
+    
+    poly_patch = patches.Polygon(pontos_principais, closed=True, facecolor=facecolor, edgecolor=edgecolor, linewidth=linewidth)
+    ax.add_patch(poly_patch)
+
+    for furo in perfil["furos"]:
+        if furo.dxftype() == "LWPOLYLINE":
+            pontos = [(x, y) for x, y, *_ in furo.get_points()]
+        else:
+            pontos = [(x, y) for x, y, *_ in furo.points()]
+        
+        furo_patch = patches.Polygon(pontos, closed=True, facecolor=furo_color, edgecolor=edgecolor, linewidth=1.0)
+        ax.add_patch(furo_patch)
+
 def criar_layout_temporario(doc, perfil):
     layout_name = "TEMP_LAYOUT"
     if layout_name in doc.layouts:
         doc.layouts.delete(layout_name)
     layout = doc.layouts.new(layout_name)
-
-    # Copiar polyline e cotas
     for entidade in [perfil["polyline"]] + perfil["dimensions"]:
         layout.add_entity(entidade.copy())
-
     return layout
-
 
 def render_completo_layout(layout, ax):
     ctx = RenderContext(layout.doc)
@@ -185,9 +195,9 @@ def render_completo_layout(layout, ax):
     frontend = Frontend(ctx, backend, config=config)
     frontend.draw_layout(layout, finalize=True, layout_properties=layout_props)
 
-
 def render_imagens(doc, perfil, nome_base):
     nome = f"{nome_base}"
+
     if perfil["polyline"].dxftype() == "LWPOLYLINE":
         points = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
     else:
@@ -203,57 +213,32 @@ def render_imagens(doc, perfil, nome_base):
     ax.set_facecolor("#FFFFFF")
     ax.set_axis_off()
 
-    # Calcular centro do perfil
     centro_x = (min_x + max_x) / 2
     centro_y = (min_y + max_y) / 2
-
-    # Definir área fixa de visualização (500x500 px → 5x5 inches @ 100 dpi)
-    # Vamos usar uma área de 100x100 unidades DXF como padrão
-    half_range = 50  # metade da área em unidades DXF
-
+    half_range = 50
     ax.set_xlim(centro_x - half_range, centro_x + half_range)
     ax.set_ylim(centro_y - half_range, centro_y + half_range)
     ax.set_aspect('equal')
 
-
-    # Desenhar polígono principal (preenchido em preto)
-    polygon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000", linewidth=1.5)
-    ax.add_patch(polygon)
-
-
-    # Desenhar polígono
-    for furo in perfil["furos"]:
-        if furo.dxftype() == "LWPOLYLINE":
-            pontos = [(x, y) for x, y, *_ in furo.get_points()]
-        else:
-            pontos = [(x, y) for x, y, *_ in furo.points()]
-        
-        furo_patch = patches.Polygon(pontos, closed=True, facecolor="#FFFFFF", edgecolor="#000000", linewidth=1.0)
-        ax.add_patch(furo_patch)
-
-
-
-    # Renderizar layout temporário
+    desenhar_perfil_com_furos(ax, perfil)
     layout_temp = criar_layout_temporario(doc, perfil)
     render_completo_layout(layout_temp, ax)
 
-    # Salvar imagem
     path_png = FIGURAS_DIR / f"{nome}.png"
     fig.savefig(path_png, dpi=100, transparent=False)
     centralizar_em_moldura(path_png)
     plt.close(fig)
 
-
-
     # BMP sem cotas
     fig, ax = plt.subplots(figsize=(0.64, 0.64), dpi=100)
     ax.set_facecolor("#FFFFFF")
     ax.set_axis_off()
-    polygon_icon = patches.Polygon(points, closed=True, facecolor="#000000", edgecolor="#000000", linewidth=1.5)
-    ax.add_patch(polygon_icon)
+
+    desenhar_perfil_com_furos(ax, perfil)
     ax.set_xlim(min_x - margem, max_x + margem)
     ax.set_ylim(min_y - margem, max_y + margem)
     ax.set_aspect('equal')
+
     temp_icon_png = ICONES_DIR / f"{nome_base}_temp.png"
     fig.savefig(temp_icon_png, dpi=100, transparent=False)
     plt.close(fig)
@@ -284,9 +269,7 @@ def main():
     FIGURAS_DIR.mkdir(parents=True, exist_ok=True)
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
-    input_file = Path("files") / "SixEquals.dxf"
-#   input_file = Path("files") / "TwoEquals.dxf"
-#   input_file = Path("files") / "Perfis.dxf"
+    input_file = Path("files") / "TESTE OPEN S_filter.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
@@ -297,7 +280,7 @@ def main():
         render_imagens(doc, perfil, f"{nome_base}")
 
     compactar_output()
-    print(f"✅ Imagens geradas com cotas (PNG) e sem cotas (BMP). Arquivo final: {ZIP_PATH}")
+    print(f"Imagens geradas com cotas (PNG) e sem cotas (BMP). Arquivo final: {ZIP_PATH}")
 
 if __name__ == "__main__":
     main()
