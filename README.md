@@ -109,11 +109,14 @@ Instale as dependências com:
 ------------------------------------
 PRÓXIMOS PASSOS
 ------------------------------------
+
+
+```
 [ ] Suporte a seleção de arquivo via argumentos CLI (argparse)
 [ ] Implementar logs de processamento
 [ ] Melhorar processamento de perfis com ângulos acentuados
 [ ] Suporte a exportação em SVG e PDF
-
+```
 ------------------------------------
 AUTOR E PROPÓSITO
 ------------------------------------
