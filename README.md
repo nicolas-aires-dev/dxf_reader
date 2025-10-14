@@ -119,4 +119,4 @@ AUTOR E PROPÓSITO
 ------------------------------------
 Projeto desenvolvido para automatizar a extração e visualização
 de perfis DXF em fluxos de alimentação do MOF, economizando tempo da equipe de PI, 
-economizando 96,67% do tempo de criação de cada perfil individualmente.
+economizando 94,5% do tempo de criação de cada perfil individualmente.
