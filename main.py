@@ -35,6 +35,14 @@ def carregar_dxf(path: str):
     msp = doc.modelspace()
     return doc, msp
 
+def sanitize_filename(name: str) -> str:
+    # Remove caracteres inválidos para Windows
+    name = name.replace("\n", "_").replace("\r", "_")
+    name = name.replace("\\", "_").replace("/", "_")
+    # Opcional: remover outros caracteres especiais
+    name = re.sub(r'[^a-zA-Z0-9._-]', "_", name)
+    return name
+
 def get_bbox(entity):
     try:
         if entity.dxftype() == "LWPOLYLINE":
@@ -148,9 +156,14 @@ def associar_entidades(msp, perfis):
 
 def extrair_nome(texts):
     for t in texts:
-        if not re.search(r"Kg/m", t):
-            return t.strip()
+        # remove qualquer trecho que contenha número + "kg/m"
+        nome = re.sub(r"\s*\d+[,\.]?\d*\s*kg/m", "", t, flags=re.IGNORECASE)
+        nome = nome.strip()
+        if nome:
+            return sanitize_filename(nome)
     return "perfil_sem_nome"
+
+
 
 # =============================
 # Renderização
@@ -269,7 +282,9 @@ def main():
     FIGURAS_DIR.mkdir(parents=True, exist_ok=True)
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
-    input_file = Path("files") / "TESTE OPEN S_filter.dxf"
+    # input_file = Path('files') / "ObjectsExample.dxf"
+    input_file = Path("files") / "TEST_CASE_1.dxf"
+    # input_file = Path("files") / "TEST_CASE_2.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
