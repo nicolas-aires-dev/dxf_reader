@@ -5,6 +5,7 @@ import re
 import shutil
 from pathlib import Path
 import ezdxf
+from ezdxf import path as ezdxf_path
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
@@ -25,6 +26,7 @@ TMP_DIR = OUTPUT_DIR / "tmp"
 FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
+CURVE_FLATTENING_DISTANCE = 0.5
 
 
 # =============================
@@ -43,12 +45,55 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r'[^a-zA-Z0-9._-]', "_", name)
     return name
 
-def get_bbox(entity):
+def limpar_pontos_repetidos(points):
+    limpos = []
+    for ponto in points:
+        if not limpos or distancia(limpos[-1], ponto) > 1e-9:
+            limpos.append(ponto)
+    if len(limpos) > 1 and distancia(limpos[0], limpos[-1]) <= 1e-9:
+        limpos.pop()
+    return limpos
+
+def entity_to_points(entity, distance=CURVE_FLATTENING_DISTANCE):
+    """Converte linhas, polilinhas com bulge e curvas DXF em pontos 2D."""
+    try:
+        dxf_path = ezdxf_path.make_path(entity)
+        points = [(p.x, p.y) for p in dxf_path.flattening(distance=distance, segments=16)]
+        points = limpar_pontos_repetidos(points)
+        if len(points) >= 2:
+            return points
+    except Exception:
+        pass
+
+    try:
+        if hasattr(entity, "virtual_entities"):
+            points = []
+            for virtual_entity in entity.virtual_entities():
+                virtual_points = entity_to_points(virtual_entity, distance=distance)
+                points.extend(virtual_points)
+            points = limpar_pontos_repetidos(points)
+            if len(points) >= 2:
+                return points
+    except Exception:
+        pass
+
     try:
         if entity.dxftype() == "LWPOLYLINE":
-            points = [(x, y) for x, y, *_ in entity.get_points()]
-        else:
-            points = [(x, y) for x, y, *_ in entity.points()]
+            return [(x, y) for x, y, *_ in entity.get_points()]
+        return [(x, y) for x, y, *_ in entity.points()]
+    except Exception:
+        return []
+
+def is_closed_geometry(entity):
+    if entity.dxftype() in {"CIRCLE", "ELLIPSE"}:
+        return True
+    return bool(getattr(entity, "closed", False))
+
+def get_bbox(entity):
+    try:
+        points = entity_to_points(entity)
+        if not points:
+            return None
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
         return min(xs), min(ys), max(xs), max(ys)
@@ -68,11 +113,8 @@ def distancia(p1, p2):
 
 def is_quadrado(polyline):
     try:
-        if polyline.dxftype() == "LWPOLYLINE":
-            points = [(x, y) for x, y, *_ in polyline.get_points()]
-        else:
-            points = [(x, y) for x, y, *_ in polyline.points()]
-        if len(points) != 4 or not polyline.closed:
+        points = entity_to_points(polyline)
+        if len(points) != 4 or not is_closed_geometry(polyline):
             return False
         def dist(p1, p2):
             return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
@@ -96,11 +138,13 @@ def centralizar_em_moldura(img_path, tamanho_final=(500, 500)):
         fundo.save(img_path)
 
 def detectar_furos(msp, perfis):
-    candidatos = [e for e in msp.query('LWPOLYLINE POLYLINE') if e.closed]
+    candidatos = [e for e in msp.query('LWPOLYLINE POLYLINE CIRCLE ELLIPSE') if is_closed_geometry(e)]
 
     for perfil in perfis:
         principal = perfil["polyline"]
         bbox_principal = get_bbox(principal)
+        if not bbox_principal:
+            continue
         centro_principal = centro_bbox(bbox_principal)
 
         for furo in candidatos:
@@ -168,21 +212,19 @@ def extrair_nome(texts):
 # =============================
 # Renderização
 # =============================
-def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.5):
+def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.0):
     """Desenha o perfil principal e seus furos em um eixo Matplotlib."""
-    if perfil["polyline"].dxftype() == "LWPOLYLINE":
-        pontos_principais = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
-    else:
-        pontos_principais = [(x, y) for x, y, *_ in perfil["polyline"].points()]
+    pontos_principais = entity_to_points(perfil["polyline"])
+    if not pontos_principais:
+        return
     
     poly_patch = patches.Polygon(pontos_principais, closed=True, facecolor=facecolor, edgecolor=edgecolor, linewidth=linewidth)
     ax.add_patch(poly_patch)
 
     for furo in perfil["furos"]:
-        if furo.dxftype() == "LWPOLYLINE":
-            pontos = [(x, y) for x, y, *_ in furo.get_points()]
-        else:
-            pontos = [(x, y) for x, y, *_ in furo.points()]
+        pontos = entity_to_points(furo)
+        if not pontos:
+            continue
         
         furo_patch = patches.Polygon(pontos, closed=True, facecolor=furo_color, edgecolor=edgecolor, linewidth=1.0)
         ax.add_patch(furo_patch)
@@ -201,7 +243,7 @@ def render_completo_layout(layout, ax):
     layout_props = LayoutProperties.from_layout(layout)
     layout_props.set_colors(bg="#FFFFFF", fg="#000000")
     config = Configuration.defaults().with_changes(
-        lineweight_scaling=3.0,
+        lineweight_scaling=1.0,
         min_lineweight=0.8
     )
     backend = MatplotlibBackend(ax)
@@ -211,10 +253,9 @@ def render_completo_layout(layout, ax):
 def render_imagens(doc, perfil, nome_base):
     nome = f"{nome_base}"
 
-    if perfil["polyline"].dxftype() == "LWPOLYLINE":
-        points = [(x, y) for x, y, *_ in perfil["polyline"].get_points()]
-    else:
-        points = [(x, y) for x, y, *_ in perfil["polyline"].points()]
+    points = entity_to_points(perfil["polyline"])
+    if not points:
+        return
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     min_x, max_x = min(xs), max(xs)
@@ -283,8 +324,8 @@ def main():
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
     # input_file = Path('files') / "ObjectsExample.dxf"
-    input_file = Path("files") / "TEST_CASE_1.dxf"
-    # input_file = Path("files") / "TEST_CASE_2.dxf"
+    # input_file = Path("files") / "SP20-Aluminorte-R01-novo.dxf"
+    input_file = Path("files") / "TEST_CASE_2.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
