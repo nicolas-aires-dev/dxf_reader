@@ -1,3 +1,5 @@
 /venv
 /output/*
 /.agents
+/files/bkp
+./*.bak
