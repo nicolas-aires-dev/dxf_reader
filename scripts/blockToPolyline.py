@@ -1,6 +1,7 @@
 import ezdxf
 from pathlib import Path
 
+
 def criar_cotas_bbox(msp, polyline):
     try:
         bbox = polyline.bbox()
@@ -29,6 +30,7 @@ def criar_cotas_bbox(msp, polyline):
         dxfattribs={'layer': 'PERFIS', 'color': 256}
     )
     altura.render()
+
 
 def converter_blocos_para_polylines(input_path: str, output_path: str):
     doc = ezdxf.readfile(input_path)
@@ -71,11 +73,3 @@ if __name__ == "__main__":
     input_file = Path("files") / "TestePreenchimento.dxf"
     output_file = Path("output") / "TestePreenchimento_convertido.dxf"
     converter_blocos_para_polylines(input_file, output_file)
-
-
-
-
-
-
-
-

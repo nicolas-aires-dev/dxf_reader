@@ -2,25 +2,26 @@
 # Imports
 # =============================
 import re
-import shutil
-from pathlib import Path
 import ezdxf
-from ezdxf import path as ezdxf_path
+import shutil
+import threading
+import tkinter as tk
+from PIL import Image
+from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from PIL import Image
+from ezdxf import path as ezdxf_path
+from tkinter import filedialog, messagebox
+from ezdxf.addons.drawing.config import Configuration
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from ezdxf.addons.drawing.properties import LayoutProperties
-from ezdxf.addons.drawing.config import Configuration
-
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import threading
 
 # =============================
 # Configurações de diretórios
 # =============================
+
+
 OUTPUT_DIR = Path("./output")
 TMP_DIR = OUTPUT_DIR / "tmp"
 FIGURAS_DIR = TMP_DIR / "figuras"
@@ -28,13 +29,17 @@ ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
 CURVE_FLATTENING_DISTANCE = 0.5
 
+
 # =============================
 # Utilidades
 # =============================
+
+
 def carregar_dxf(path: str):
     doc = ezdxf.readfile(path)
     msp = doc.modelspace()
     return doc, msp
+
 
 def limpar_pontos_repetidos(points):
     limpos = []
@@ -44,6 +49,7 @@ def limpar_pontos_repetidos(points):
     if len(limpos) > 1 and distancia(limpos[0], limpos[-1]) <= 1e-9:
         limpos.pop()
     return limpos
+
 
 def entity_to_points(entity, distance=CURVE_FLATTENING_DISTANCE):
     """Converte linhas, polilinhas com bulge e curvas DXF em pontos 2D."""
@@ -75,10 +81,12 @@ def entity_to_points(entity, distance=CURVE_FLATTENING_DISTANCE):
     except Exception:
         return []
 
+
 def is_closed_geometry(entity):
     if entity.dxftype() in {"CIRCLE", "ELLIPSE"}:
         return True
     return bool(getattr(entity, "closed", False))
+
 
 def get_bbox(entity):
     try:
@@ -91,29 +99,36 @@ def get_bbox(entity):
     except Exception:
         return None
 
+
 def ponto_no_bbox(x, y, bbox, margem=15):
     x1, y1, x2, y2 = bbox
     return (x1 - margem <= x <= x2 + margem) and (y1 - margem <= y <= y2 + margem)
+
 
 def centro_bbox(bbox):
     x1, y1, x2, y2 = bbox
     return (x1 + x2) / 2, (y1 + y2) / 2
 
+
 def distancia(p1, p2):
     return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
+
 
 def is_quadrado(polyline):
     try:
         points = entity_to_points(polyline)
         if len(points) != 4 or not is_closed_geometry(polyline):
             return False
+
         def dist(p1, p2):
             return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
         lados = [dist(points[i], points[(i + 1) % 4]) for i in range(4)]
         media = sum(lados) / 4
         return all(abs(l - media) < 1.0 for l in lados)
+
     except Exception:
         return False
+
 
 def centralizar_em_moldura(img_path, tamanho_final=(500, 500)):
     with Image.open(img_path) as img:
@@ -128,15 +143,16 @@ def centralizar_em_moldura(img_path, tamanho_final=(500, 500)):
         fundo = fundo.convert("RGB")
         fundo.save(img_path)
 
+
 def detectar_furos(msp, perfis):
     candidatos = [e for e in msp.query('LWPOLYLINE POLYLINE CIRCLE ELLIPSE') if is_closed_geometry(e)]
 
     for perfil in perfis:
         principal = perfil["polyline"]
         bbox_principal = get_bbox(principal)
+
         if not bbox_principal:
             continue
-        centro_principal = centro_bbox(bbox_principal)
 
         for furo in candidatos:
             if furo == principal:
@@ -148,9 +164,12 @@ def detectar_furos(msp, perfis):
             if ponto_no_bbox(centro_furo[0], centro_furo[1], bbox_principal, margem=2):
                 perfil["furos"].append(furo)
 
+
 # =============================
 # Processamento
 # =============================
+
+
 def filtrar_perfis(msp):
     perfis = []
     for e in msp.query('LWPOLYLINE POLYLINE'):
@@ -163,6 +182,7 @@ def filtrar_perfis(msp):
             "furos": []
         })
     return perfis
+
 
 def associar_entidades(msp, perfis):
     textos = [e for e in msp.query('TEXT MTEXT')]
@@ -189,21 +209,25 @@ def associar_entidades(msp, perfis):
                 perfil["dimensions"].append(d)
     return perfis
 
+
 def extrair_nome(texts):
     for t in texts:
         if not re.search(r"Kg/m", t):
             return t.strip()
     return "perfil_sem_nome"
 
+
 # =============================
 # Renderização
 # =============================
+
+
 def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.5):
     """Desenha o perfil principal e seus furos em um eixo Matplotlib."""
     pontos_principais = entity_to_points(perfil["polyline"])
     if not pontos_principais:
         return
-    
+
     poly_patch = patches.Polygon(pontos_principais, closed=True, facecolor=facecolor, edgecolor=edgecolor, linewidth=linewidth)
     ax.add_patch(poly_patch)
 
@@ -211,9 +235,10 @@ def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#00000
         pontos = entity_to_points(furo)
         if not pontos:
             continue
-        
+
         furo_patch = patches.Polygon(pontos, closed=True, facecolor=furo_color, edgecolor=edgecolor, linewidth=1.0)
         ax.add_patch(furo_patch)
+
 
 def criar_layout_temporario(doc, perfil):
     layout_name = "TEMP_LAYOUT"
@@ -223,6 +248,7 @@ def criar_layout_temporario(doc, perfil):
     for entidade in [perfil["polyline"]] + perfil["dimensions"]:
         layout.add_entity(entidade.copy())
     return layout
+
 
 def render_completo_layout(layout, ax):
     ctx = RenderContext(layout.doc)
@@ -235,6 +261,7 @@ def render_completo_layout(layout, ax):
     backend = MatplotlibBackend(ax)
     frontend = Frontend(ctx, backend, config=config)
     frontend.draw_layout(layout, finalize=True, layout_properties=layout_props)
+
 
 def render_imagens(doc, perfil, nome_base):
     nome = f"{nome_base}"
@@ -288,9 +315,12 @@ def render_imagens(doc, perfil, nome_base):
         img.save(path_bmp, format="BMP")
     temp_icon_png.unlink()
 
+
 # =============================
 # Exportação
 # =============================
+
+
 def compactar_output():
     if ZIP_PATH.exists():
         ZIP_PATH.unlink()
@@ -300,9 +330,12 @@ def compactar_output():
         root_dir=TMP_DIR
     )
 
+
 # =============================
 # Função principal com caminhos
 # =============================
+
+
 def main_with_paths(input_path: Path, output_path: Path):
     # --- Preparação de diretórios ---
     TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -336,15 +369,19 @@ def main_with_paths(input_path: Path, output_path: Path):
 # =============================
 # Tkinter Interface Visual
 # =============================
+
+
 def escolher_input():
     caminho = filedialog.askopenfilename(filetypes=[("Arquivos DXF", "*.dxf")])
     if caminho:
         input_var.set(caminho)
 
+
 def escolher_output():
     caminho = filedialog.askdirectory()
     if caminho:
         output_var.set(caminho)
+
 
 def rodar_processo():
     input_path = Path(input_var.get())
@@ -399,5 +436,7 @@ def iniciar_interface():
 # =============================
 # Execução principal (interface)
 # =============================
+
+
 if __name__ == "__main__":
     iniciar_interface()
