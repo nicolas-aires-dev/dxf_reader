@@ -6,14 +6,11 @@
 import re
 import ezdxf
 import shutil
-import threading
-import tkinter as tk
 from PIL import Image
 from pathlib import Path
 import matplotlib.pyplot as plt
 from ezdxf import path as ezdxf_path
 import matplotlib.patches as patches
-from tkinter import filedialog, messagebox
 from ezdxf.addons.drawing.config import Configuration
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.properties import LayoutProperties
@@ -31,6 +28,7 @@ FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
 CURVE_FLATTENING_DISTANCE = 0.5
+TEXT_ASSOCIATION_MARGIN = 30
 
 
 # =============================
@@ -113,6 +111,20 @@ def get_bbox(entity):
         return None
 
 
+def polygon_area(points):
+    if len(points) < 3:
+        return 0
+    area = 0
+    for i, ponto in enumerate(points):
+        proximo = points[(i + 1) % len(points)]
+        area += ponto[0] * proximo[1] - proximo[0] * ponto[1]
+    return abs(area) / 2
+
+
+def entity_area(entity):
+    return polygon_area(entity_to_points(entity))
+
+
 def ponto_no_bbox(x, y, bbox, margem=15):
     x1, y1, x2, y2 = bbox
     return (x1 - margem <= x <= x2 + margem) and (y1 - margem <= y <= y2 + margem)
@@ -184,10 +196,34 @@ def detectar_furos(msp, perfis):
 
 
 def filtrar_perfis(msp):
-    perfis = []
+    candidatos = []
     for e in msp.query('LWPOLYLINE POLYLINE'):
         if e.dxf.layer.upper() == "MOLDURA":
             continue
+        bbox = get_bbox(e)
+        if not bbox:
+            continue
+        candidatos.append({
+            "entity": e,
+            "bbox": bbox,
+            "centro": centro_bbox(bbox),
+            "area": entity_area(e),
+        })
+
+    perfis = []
+    for candidato in candidatos:
+        centro = candidato["centro"]
+        area = candidato["area"]
+        esta_contido = any(
+            outro is not candidato
+            and outro["area"] > area
+            and ponto_no_bbox(centro[0], centro[1], outro["bbox"], margem=0)
+            for outro in candidatos
+        )
+        if esta_contido:
+            continue
+
+        e = candidato["entity"]
         perfis.append({
             "polyline": e,
             "texts": [],
@@ -195,6 +231,15 @@ def filtrar_perfis(msp):
             "furos": []
         })
     return perfis
+
+
+def nome_unico(nome_base, nomes_usados):
+    nome = sanitize_filename(nome_base.strip()) if nome_base.strip() else "perfil_sem_nome"
+    quantidade = nomes_usados.get(nome, 0) + 1
+    nomes_usados[nome] = quantidade
+    if quantidade == 1:
+        return nome
+    return f"{nome}_{quantidade}"
 
 
 def associar_entidades(msp, perfis):
@@ -210,7 +255,7 @@ def associar_entidades(msp, perfis):
                 x, y, _ = t.dxf.insert
             except AttributeError:
                 continue
-            if ponto_no_bbox(x, y, bbox):
+            if ponto_no_bbox(x, y, bbox, margem=TEXT_ASSOCIATION_MARGIN):
                 conteudo = t.plain_text() if hasattr(t, "plain_text") else t.dxf.text
                 perfil["texts"].append(conteudo)
         for d in cotas:
@@ -315,7 +360,7 @@ def render_imagens(doc, perfil, nome_base):
     plt.close(fig)
 
     # BMP sem cotas
-    fig, ax = plt.subplots(figsize=(0.64, 0.64), dpi=100)
+    fig, ax = plt.subplots(figsize=(0.64, 0.64), dpi=100, linewidth=0.6)
     ax.set_facecolor("#FFFFFF")
     ax.set_axis_off()
 
@@ -361,16 +406,16 @@ def main():
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
     # input_file = Path('files') / "ObjectsExample.dxf"
-    # input_file = Path("files") / "SP20-Aluminorte-R01-novo.dxf"
-    input_file = Path("files") / "TEST_CASE_2.dxf"
+    input_file = Path("files/bkp") / "SCHUCO_TESTE.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
     detectar_furos(msp, perfis)
 
+    nomes_usados = {}
     for i, perfil in enumerate(perfis):
         nome_base = extrair_nome(perfil["texts"])
-        render_imagens(doc, perfil, f"{nome_base}")
+        render_imagens(doc, perfil, nome_unico(nome_base, nomes_usados))
 
     compactar_output()
     print(f"Imagens geradas com cotas (PNG) e sem cotas (BMP). Arquivo final: {ZIP_PATH}")

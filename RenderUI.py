@@ -28,6 +28,7 @@ FIGURAS_DIR = TMP_DIR / "figuras"
 ICONES_DIR = TMP_DIR / "icones"
 ZIP_PATH = OUTPUT_DIR / "imagens.zip"
 CURVE_FLATTENING_DISTANCE = 0.5
+TEXT_ASSOCIATION_MARGIN = 30
 
 
 # =============================
@@ -39,6 +40,13 @@ def carregar_dxf(path: str):
     doc = ezdxf.readfile(path)
     msp = doc.modelspace()
     return doc, msp
+
+
+def sanitize_filename(name: str) -> str:
+    name = name.replace("\n", "_").replace("\r", "_")
+    name = name.replace("\\", "_").replace("/", "_")
+    name = re.sub(r'[^a-zA-Z0-9._-]', "_", name)
+    return name
 
 
 def limpar_pontos_repetidos(points):
@@ -98,6 +106,20 @@ def get_bbox(entity):
         return min(xs), min(ys), max(xs), max(ys)
     except Exception:
         return None
+
+
+def polygon_area(points):
+    if len(points) < 3:
+        return 0
+    area = 0
+    for i, ponto in enumerate(points):
+        proximo = points[(i + 1) % len(points)]
+        area += ponto[0] * proximo[1] - proximo[0] * ponto[1]
+    return abs(area) / 2
+
+
+def entity_area(entity):
+    return polygon_area(entity_to_points(entity))
 
 
 def ponto_no_bbox(x, y, bbox, margem=15):
@@ -171,10 +193,34 @@ def detectar_furos(msp, perfis):
 
 
 def filtrar_perfis(msp):
-    perfis = []
+    candidatos = []
     for e in msp.query('LWPOLYLINE POLYLINE'):
         if e.dxf.layer.upper() == "MOLDURA":
             continue
+        bbox = get_bbox(e)
+        if not bbox:
+            continue
+        candidatos.append({
+            "entity": e,
+            "bbox": bbox,
+            "centro": centro_bbox(bbox),
+            "area": entity_area(e),
+        })
+
+    perfis = []
+    for candidato in candidatos:
+        centro = candidato["centro"]
+        area = candidato["area"]
+        esta_contido = any(
+            outro is not candidato
+            and outro["area"] > area
+            and ponto_no_bbox(centro[0], centro[1], outro["bbox"], margem=0)
+            for outro in candidatos
+        )
+        if esta_contido:
+            continue
+
+        e = candidato["entity"]
         perfis.append({
             "polyline": e,
             "texts": [],
@@ -197,7 +243,7 @@ def associar_entidades(msp, perfis):
                 x, y, _ = t.dxf.insert
             except AttributeError:
                 continue
-            if ponto_no_bbox(x, y, bbox):
+            if ponto_no_bbox(x, y, bbox, margem=TEXT_ASSOCIATION_MARGIN):
                 conteudo = t.plain_text() if hasattr(t, "plain_text") else t.dxf.text
                 perfil["texts"].append(conteudo)
         for d in cotas:
@@ -212,9 +258,20 @@ def associar_entidades(msp, perfis):
 
 def extrair_nome(texts):
     for t in texts:
-        if not re.search(r"Kg/m", t):
-            return t.strip()
+        nome = re.sub(r"\s*\d+[,\.]?\d*\s*kg/m", "", t, flags=re.IGNORECASE)
+        nome = nome.strip()
+        if nome:
+            return sanitize_filename(nome)
     return "perfil_sem_nome"
+
+
+def nome_unico(nome_base, nomes_usados):
+    nome = sanitize_filename(nome_base.strip()) if nome_base.strip() else "perfil_sem_nome"
+    quantidade = nomes_usados.get(nome, 0) + 1
+    nomes_usados[nome] = quantidade
+    if quantidade == 1:
+        return nome
+    return f"{nome}_{quantidade}"
 
 
 # =============================
@@ -352,9 +409,10 @@ def main_with_paths(input_path: Path, output_path: Path):
     detectar_furos(msp, perfis)
 
     # --- Renderizar cada perfil ---
+    nomes_usados = {}
     for perfil in perfis:
         nome = extrair_nome(perfil["texts"])
-        render_imagens(doc, perfil, nome)
+        render_imagens(doc, perfil, nome_unico(nome, nomes_usados))
 
     # --- Compactar resultados ---
     compactar_output()
