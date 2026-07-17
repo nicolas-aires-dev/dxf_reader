@@ -421,6 +421,10 @@ def main_with_paths(input_path: Path, output_path: Path):
     destino_zip = output_path / ZIP_PATH.name
     shutil.copy2(ZIP_PATH, destino_zip)
 
+        # --- Remover arquivos temporários ---
+    if TMP_DIR.exists():
+        shutil.rmtree(TMP_DIR)
+
     print(f"✅ Renderização concluída. Arquivos salvos em: {destino_zip}")
 
 
