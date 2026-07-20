@@ -1,15 +1,14 @@
-
  DXF PROFILE RENDERER
 ====================================
 
-
 Ferramenta para processar arquivos DXF, detectar perfis e furos,
 gerar imagens automaticamente (com e sem cotas) e compactar o
-resultado em um arquivo ZIP.
+resultado em um arquivo `ZIP.`
 
 O projeto oferece:
  - Uma interface de linha de comando (main.py)
  - Uma interface gráfica (RenderUI.py) feita em Tkinter
+ - Gerar executável com o comando ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor RenderUI.py```
 
 ------------------------------------
 FUNCIONALIDADES
@@ -22,14 +21,15 @@ FUNCIONALIDADES
 - Renderização dos perfis em:
     • PNG (com cotas)
     • BMP (sem cotas, ideal para ícones)
-- Compactação final em imagens.zip
+- Compactação final em imagens `.zip`
 
 ------------------------------------
-INTERFACE GRÁFICA (RenderUI.py)
+INTERFACE GRÁFICA DxfConversor (RenderUI.py)
 ------------------------------------
 O arquivo RenderUI.py fornece uma interface simples feita com Tkinter.
 
 Permite:
+ - Criar executável da interface gráfica com ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor RenderUI.py```
  - Selecionar arquivos DXF pelo explorador de arquivos
  - Executar o processamento com um clique
  - Popup que indica o termino do processo
@@ -45,14 +45,11 @@ Para executar o processamento diretamente:
     python main.py
 
 Por padrão, o script:
- - Lê o arquivo localizado em "files/TESTE OPEN S_filter.dxf"
+ - Lê o arquivo localizado em "files/TEST_CASE_1.dxf"
  - Gera as imagens e salva tudo em:
 
 ```sh
     ./output/
-      ├── tmp/
-      │   ├── figuras/  -> PNG com cotas
-      │   └── icones/   -> BMP sem cotas
       └── imagens.zip
 ```
 
@@ -92,9 +89,11 @@ ESTRUTURA DO PROJETO
 ```sh
 dxf_profile_renderer/
  ├── files/
- │    └── TESTE OPEN S_filter.dxf       -> Exemplo de entrada
+ │    └── ARQUIVO_DE_ENTRADA.dxf       -> Exemplo de entrada
  ├── output/                            -> Gerado automaticamente
  │    └── imagens.zip
+ ├── dist
+ │    └── DxfConversor.exe
  ├── RenderUI.py                        -> Interface gráfica (Tkinter)
  ├── main.py                            -> CLI e lógica principal
  └── requirements.txt                   -> Dependências
@@ -112,9 +111,7 @@ PRÓXIMOS PASSOS
 
 
 ```
-[ ] Suporte a seleção de arquivo via argumentos CLI (argparse)
-[ ] Implementar logs de processamento
-[ ] Melhorar processamento de perfis com ângulos acentuados
+[X] Melhorar processamento de perfis com ângulos arqueados
 [ ] Suporte a exportação em SVG e PDF
 ```
 ------------------------------------
