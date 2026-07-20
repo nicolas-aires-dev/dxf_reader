@@ -405,8 +405,7 @@ def main():
     FIGURAS_DIR.mkdir(parents=True, exist_ok=True)
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # input_file = Path('files') / "ObjectsExample.dxf"
-    input_file = Path("files/bkp") / "SCHUCO_TESTE.dxf"
+    input_file = Path('files') / "ObjectsExample.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)
