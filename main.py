@@ -417,11 +417,11 @@ def main():
         nome_base = extrair_nome(perfil["texts"])
         render_imagens(doc, perfil, nome_unico(nome_base, nomes_usados))
 
+    compactar_output()
+    
     # --- Remover arquivos temporários ---
     if TMP_DIR.exists():
         shutil.rmtree(TMP_DIR)
-
-    compactar_output()
     print(f"Imagens geradas com cotas (PNG) e sem cotas (BMP). Arquivo final: {ZIP_PATH}")
 
 

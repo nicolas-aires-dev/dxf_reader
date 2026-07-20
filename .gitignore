@@ -3,3 +3,5 @@
 /.agents
 /files/bkp
 /*.bak
+/personal
+/dist

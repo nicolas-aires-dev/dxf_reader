@@ -425,6 +425,12 @@ def main_with_paths(input_path: Path, output_path: Path):
     if TMP_DIR.exists():
         shutil.rmtree(TMP_DIR)
 
+    if output_path.exists():
+        try:
+            shutil.rmtree(output_path / "output")
+        except Exception as e:
+            print(e)
+
     print(f"✅ Renderização concluída. Arquivos salvos em: {destino_zip}")
 
 
@@ -468,29 +474,92 @@ def rodar_processo():
 def iniciar_interface():
     global input_var, output_var
 
+    BG = "#202124"        # Fundo
+    FG = "#FFFFFF"        # Texto
+    ENTRY_BG = "#2D2D30"  # Fundo dos Entry
+    BTN_BG = "#3C3C3C"    # Fundo dos botões
+    BTN_FG = "#FFFFFF"
+
     root = tk.Tk()
-    root.title("Renderizador DXF")
+    root.title("Conversor DXF")
     root.geometry("500x250")
+    root.configure(bg= BG)
 
     input_var = tk.StringVar()
     output_var = tk.StringVar()
 
     # Input DXF
-    tk.Label(root, text="Arquivo DXF:").pack(anchor="w", padx=10, pady=(10, 0))
-    frame_input = tk.Frame(root)
+    tk.Label(
+        root,
+        text="Arquivo DXF:",
+        bg=BG,
+        fg=FG
+    ).pack(anchor="w", padx=10, pady=(10, 0))
+
+    frame_input = tk.Frame(root, bg=BG)
     frame_input.pack(fill="x", padx=10)
-    tk.Entry(frame_input, textvariable=input_var, width=50).pack(side="left", fill="x", expand=True)
-    tk.Button(frame_input, text="Selecionar...", command=escolher_input).pack(side="right", padx=5)
+
+    tk.Entry(
+        frame_input,
+        textvariable=input_var,
+        width=50,
+        bg=ENTRY_BG,
+        fg=FG,
+        insertbackground=FG,      # Cor do cursor
+        relief="flat"
+    ).pack(side="left", fill="x", expand=True)
+
+    tk.Button(
+        frame_input,
+        text="Selecionar...",
+        command=escolher_input,
+        bg=BTN_BG,
+        fg=BTN_FG,
+        activebackground="#4A4A4A",
+        activeforeground=FG
+    ).pack(side="right", padx=5)
 
     # Output
-    tk.Label(root, text="Diretório de saída:").pack(anchor="w", padx=10, pady=(10, 0))
-    frame_output = tk.Frame(root)
+    tk.Label(
+        root,
+        text="Diretório de saída:",
+        bg=BG,
+        fg=FG
+    ).pack(anchor="w", padx=10, pady=(10, 0))
+
+    frame_output = tk.Frame(root, bg=BG)
     frame_output.pack(fill="x", padx=10)
-    tk.Entry(frame_output, textvariable=output_var, width=50).pack(side="left", fill="x", expand=True)
-    tk.Button(frame_output, text="Selecionar...", command=escolher_output).pack(side="right", padx=5)
+
+    tk.Entry(
+        frame_output,
+        textvariable=output_var,
+        width=50,
+        bg=ENTRY_BG,
+        fg=FG,
+        insertbackground=FG,
+        relief="flat"
+    ).pack(side="left", fill="x", expand=True)
+
+    tk.Button(
+        frame_output,
+        text="Selecionar...",
+        command=escolher_output,
+        bg=BTN_BG,
+        fg=BTN_FG,
+        activebackground="#4A4A4A",
+        activeforeground=FG
+    ).pack(side="right", padx=5)
 
     # Executar
-    tk.Button(root, text="Executar", command=rodar_processo, bg="#0078D7", fg="white").pack(pady=20)
+    tk.Button(
+        root,
+        text="Executar",
+        command=rodar_processo,
+        bg="#0078D7",
+        fg="white",
+        activebackground="#0063B1",
+        activeforeground="white"
+    ).pack(pady=20)
 
     root.mainloop()
 
