@@ -461,7 +461,7 @@ def rodar_processo():
 
     def processar():
         try:
-            messagebox.showinfo("Processando", "Renderização iniciada...")
+            messagebox.showinfo("Processando", "Clique em 'OK' para iniciar o processamento...")
             main_with_paths(input_path, output_path)
             messagebox.showinfo("Concluído", f"Imagens geradas em: {output_path}")
         except Exception as e:
