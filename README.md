@@ -8,7 +8,7 @@ resultado em um arquivo `ZIP.`
 O projeto oferece:
  - Uma interface de linha de comando (main.py)
  - Uma interface gráfica (RenderUI.py) feita em Tkinter
- - Gerar executável com o comando ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor RenderUI.py```
+ - Gerar executável com o comando ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor --add-data "assets;assets" RenderUI.py```
 
 ------------------------------------
 FUNCIONALIDADES
@@ -29,7 +29,7 @@ INTERFACE GRÁFICA DxfConversor (RenderUI.py)
 O arquivo RenderUI.py fornece uma interface simples feita com Tkinter.
 
 Permite:
- - Criar executável da interface gráfica com ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor RenderUI.py```
+ - Criar executável da interface gráfica com ```pyinstaller --onefile --windowed --icon=assets/icon256x256.ico --name=DxfConversor --add-data "assets;assets" RenderUI.py```
  - Selecionar arquivos DXF pelo explorador de arquivos
  - Executar o processamento com um clique
  - Popup que indica o termino do processo
