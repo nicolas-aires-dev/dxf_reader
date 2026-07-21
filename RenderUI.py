@@ -2,6 +2,8 @@
 # Imports
 # =============================
 import re
+import os
+import sys
 import ezdxf
 import shutil
 import threading
@@ -470,6 +472,15 @@ def rodar_processo():
     # roda o processamento em thread separada para não travar o Tkinter
     threading.Thread(target=processar).start()
 
+def abrir_manual():
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).parent
+    
+    manual = base_path / "assets" / "ConversorDxfDoc.pdf"
+
+    os.startfile(manual)
 
 def iniciar_interface():
     global input_var, output_var
@@ -518,6 +529,14 @@ def iniciar_interface():
         activebackground="#4A4A4A",
         activeforeground=FG
     ).pack(side="right", padx=5)
+
+    tk.Button(
+        root,
+        bg=BTN_BG,
+        fg=BTN_FG,
+        text="Padronizar Dxf",
+        command=abrir_manual
+    ).pack()
 
     # Output
     tk.Label(
