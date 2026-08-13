@@ -283,7 +283,7 @@ def extrair_nome(texts):
 # =============================
 
 
-def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.0):
+def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.5):
     """Desenha o perfil principal e seus furos em um eixo Matplotlib."""
     pontos_principais = entity_to_points(perfil["polyline"])
 
@@ -405,7 +405,7 @@ def main():
     FIGURAS_DIR.mkdir(parents=True, exist_ok=True)
     ICONES_DIR.mkdir(parents=True, exist_ok=True)
 
-    input_file = Path('files') / "ObjectsExample.dxf"
+    input_file = Path('files') / "SCHUCO_TESTE.dxf"
     doc, msp = carregar_dxf(input_file)
     perfis = filtrar_perfis(msp)
     perfis = associar_entidades(msp, perfis)

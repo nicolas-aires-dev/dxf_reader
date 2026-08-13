@@ -281,7 +281,7 @@ def nome_unico(nome_base, nomes_usados):
 # =============================
 
 
-def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=1.5):
+def desenhar_perfil_com_furos(ax, perfil, facecolor="#000000", edgecolor="#000000", furo_color="#FFFFFF", linewidth=0.1):
     """Desenha o perfil principal e seus furos em um eixo Matplotlib."""
     pontos_principais = entity_to_points(perfil["polyline"])
     if not pontos_principais:
